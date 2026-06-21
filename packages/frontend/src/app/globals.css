@@ -1,0 +1,188 @@
+@import "tailwindcss";
+
+/* ─── Synchro Theme Variables ──────────────────────────────────── */
+:root {
+  --background: #0a0a0a;
+  --foreground: #e5e5e5;
+  --accent: #34d399;
+  --accent-bright: #10b981;
+  --accent-dim: #059669;
+  --surface: #171717;
+  --surface-hover: #1c1c1c;
+  --border: #262626;
+  --border-bright: #404040;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-accent: var(--accent);
+  --color-accent-bright: var(--accent-bright);
+  --color-accent-dim: var(--accent-dim);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-border: var(--border);
+  --color-border-bright: var(--border-bright);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains);
+}
+
+/* ─── Base Styles ──────────────────────────────────────────────── */
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-mono), "JetBrains Mono", "Fira Code", monospace;
+}
+
+/* ─── Scanline Overlay ─────────────────────────────────────────── */
+.scanline-overlay {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+}
+
+/* ─── Glow Effects ─────────────────────────────────────────────── */
+.glow-emerald {
+  box-shadow: 0 0 20px rgba(52, 211, 153, 0.15),
+    0 0 60px rgba(52, 211, 153, 0.05);
+}
+
+.glow-emerald-strong {
+  box-shadow: 0 0 30px rgba(52, 211, 153, 0.25),
+    0 0 80px rgba(52, 211, 153, 0.1);
+}
+
+.text-glow-emerald {
+  text-shadow: 0 0 10px rgba(52, 211, 153, 0.5),
+    0 0 40px rgba(52, 211, 153, 0.2);
+}
+
+/* ─── Terminal Cursor Blink ────────────────────────────────────── */
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+.animate-blink {
+  animation: blink 1s step-end infinite;
+}
+
+/* ─── Pulse Ring ───────────────────────────────────────────────── */
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 1.5s ease-out infinite;
+}
+
+/* ─── Subtle Flicker ──────────────────────────────────────────── */
+@keyframes flicker {
+  0%,
+  97%,
+  100% {
+    opacity: 1;
+  }
+  98% {
+    opacity: 0.85;
+  }
+  99% {
+    opacity: 0.95;
+  }
+}
+
+.animate-flicker {
+  animation: flicker 4s linear infinite;
+}
+
+/* ─── Slide Up ─────────────────────────────────────────────────── */
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.5s ease-out forwards;
+}
+
+/* ─── Data Stream ──────────────────────────────────────────────── */
+@keyframes data-stream {
+  0% {
+    background-position: 0% 0%;
+  }
+  100% {
+    background-position: 0% 100%;
+  }
+}
+
+.bg-data-stream {
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(52, 211, 153, 0.03) 50%,
+    transparent 100%
+  );
+  background-size: 100% 200%;
+  animation: data-stream 3s linear infinite;
+}
+
+/* ─── Focus Ring ───────────────────────────────────────────────── */
+input:focus,
+button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ─── Input Styling ────────────────────────────────────────────── */
+input::placeholder {
+  color: #525252;
+  font-style: italic;
+}
+
+/* ─── Scrollbar ────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-bright);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-dim);
+}
