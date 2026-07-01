@@ -19,11 +19,12 @@ import {
   type LobbyUpdatePayload,
   type PlayerJoinedPayload,
   type PlayerLeftPayload,
+  type GameStartedPayload,
 } from "@synchro/shared";
 
 // ─── Types ────────────────────────────────────────────────────────
 
-type AppState = "landing" | "connecting" | "lobby";
+type AppState = "landing" | "connecting" | "lobby" | "active";
 
 interface SystemLog {
   id: number;
@@ -45,6 +46,7 @@ export default function SynchroPage() {
   const [appState, setAppState] = useState<AppState>("landing");
   const [room, setRoom] = useState<Room | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
+  const [gameData, setGameData] = useState<GameStartedPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // ── System Logs ─────────────────────────────────────────────────
@@ -104,12 +106,19 @@ export default function SynchroPage() {
       addLog("CALIBRATION SEQUENCE INITIATED — standby...", "success");
     };
 
+    const onGameStarted = (data: GameStartedPayload) => {
+      setGameData(data);
+      setAppState("active");
+      addLog(`CALIBRATION IN PROGRESS — Operator assigned: ${data.view.roleLabel}`, "success");
+    };
+
     socket.on(SOCKET_EVENTS.JOIN_SUCCESS, onJoinSuccess);
     socket.on(SOCKET_EVENTS.JOIN_ERROR, onJoinError);
     socket.on(SOCKET_EVENTS.UPDATE_LOBBY, onLobbyUpdate);
     socket.on(SOCKET_EVENTS.PLAYER_JOINED, onPlayerJoined);
     socket.on(SOCKET_EVENTS.PLAYER_LEFT, onPlayerLeft);
     socket.on(SOCKET_EVENTS.GAME_STARTING, onGameStarting);
+    socket.on(SOCKET_EVENTS.GAME_STARTED, onGameStarted);
 
     return () => {
       socket.off(SOCKET_EVENTS.JOIN_SUCCESS, onJoinSuccess);
@@ -118,6 +127,7 @@ export default function SynchroPage() {
       socket.off(SOCKET_EVENTS.PLAYER_JOINED, onPlayerJoined);
       socket.off(SOCKET_EVENTS.PLAYER_LEFT, onPlayerLeft);
       socket.off(SOCKET_EVENTS.GAME_STARTING, onGameStarting);
+      socket.off(SOCKET_EVENTS.GAME_STARTED, onGameStarted);
     };
   }, [socket, addLog]);
 
@@ -177,6 +187,7 @@ export default function SynchroPage() {
     setAppState("landing");
     setRoom(null);
     setPlayerId(null);
+    setGameData(null);
     setError(null);
     setLogs([]);
     addLog("Session terminated. Ready for new connection.", "info");
@@ -235,7 +246,7 @@ export default function SynchroPage() {
       </div>
 
       {/* Main Content Container */}
-      <div className="relative z-10 w-full max-w-xl">
+      <div className={`relative z-10 w-full transition-all duration-500 ${appState === "active" ? "max-w-5xl" : "max-w-xl"}`}>
         {/* Header */}
         <header className="text-center mb-8 animate-slide-up">
           <div className="flex items-center justify-center gap-3 mb-3">
@@ -581,6 +592,95 @@ export default function SynchroPage() {
                     </div>
                   ))
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─── STATE: ACTIVE GAME ────────────────────────────────── */}
+        {appState === "active" && gameData && (
+          <div className="space-y-4 animate-slide-up">
+            {/* Top Banner - Shared Alert */}
+            <div className="border border-red-500/30 bg-red-500/10 backdrop-blur-sm rounded-lg p-4 flex items-start gap-4 shadow-[0_0_15px_rgba(239,68,68,0.2)]">
+              <div className="mt-1.5 w-2 h-2 rounded-full bg-red-500 animate-pulse-ring shrink-0" />
+              <div>
+                <div className="text-[10px] tracking-[0.2em] text-red-400 uppercase mb-1 font-bold">
+                  System Alert Broadcast
+                </div>
+                <div className="text-sm font-medium text-red-200 tracking-wide">
+                  {gameData.session.sharedAlert}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              {/* Left Panel - Operator Role */}
+              <div className="col-span-1 border border-border rounded-lg bg-surface/80 backdrop-blur-sm p-5 glow-emerald flex flex-col">
+                <div className="text-[10px] tracking-[0.2em] text-neutral-500 uppercase mb-3">
+                  Assignment
+                </div>
+                <div className="px-3 py-2.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs tracking-wider font-bold shadow-[0_0_10px_rgba(52,211,153,0.2)]">
+                  {gameData.view.roleLabel}
+                </div>
+
+                <div className="w-full h-px bg-gradient-to-r from-transparent via-border to-transparent my-5" />
+
+                <div className="text-[10px] tracking-[0.2em] text-neutral-500 uppercase mb-3">
+                  Crew Manifest
+                </div>
+                <div className="space-y-3 flex-1">
+                  {gameData.crew.map((c) => (
+                    <div key={c.role} className="flex items-center gap-2">
+                      <div className={`w-1.5 h-1.5 rounded-full ${c.role === gameData.assignment.role ? "bg-emerald-400 animate-pulse" : "bg-neutral-600"}`} />
+                      <div className="flex flex-col">
+                        <span className={`text-xs ${c.role === gameData.assignment.role ? "text-emerald-400 font-bold" : "text-neutral-300"}`}>
+                          {c.playerName} {c.role === gameData.assignment.role && "(YOU)"}
+                        </span>
+                        <span className="text-[9px] text-neutral-500 tracking-wider">{c.roleLabel}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                
+                <button
+                  onClick={handleDisconnect}
+                  className="mt-4 w-full py-2 border border-red-500/30 hover:bg-red-500/10 text-red-400 text-[10px] tracking-wider uppercase rounded transition-colors cursor-pointer"
+                >
+                  ABORT MISSION
+                </button>
+              </div>
+
+              {/* Center Workspace - Code/Text Lines */}
+              <div className="col-span-1 md:col-span-3 border border-border rounded-lg bg-neutral-950/90 backdrop-blur-md p-0 font-mono text-sm overflow-hidden glow-emerald flex flex-col">
+                <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-neutral-900/50">
+                  <div className="text-[10px] tracking-[0.2em] text-emerald-500/50 uppercase">
+                    Data Stream: {gameData.session.puzzleTitle}
+                  </div>
+                  <div className="text-[10px] tracking-widest text-neutral-500">
+                    ID: {gameData.session.puzzleId}
+                  </div>
+                </div>
+                
+                <div className="p-4 overflow-x-auto flex-1">
+                  <div className="min-w-[500px]">
+                    {gameData.view.lines.map((line, idx) => (
+                      <div
+                        key={idx}
+                        className="flex hover:bg-emerald-900/20 group transition-colors cursor-crosshair rounded py-0.5"
+                      >
+                        <div className="w-8 shrink-0 text-right pr-3 text-neutral-600 select-none border-r border-neutral-800 group-hover:border-emerald-500/30 group-hover:text-emerald-500/50 text-xs pt-0.5">
+                          {line.lineNumber}
+                        </div>
+                        <div
+                          className="pl-4 whitespace-pre text-emerald-400/90 group-hover:text-emerald-300 transition-colors"
+                          style={{ paddingLeft: `${(line.indent || 0) * 0.5 + 1}rem` }}
+                        >
+                          {line.content || " "}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           </div>

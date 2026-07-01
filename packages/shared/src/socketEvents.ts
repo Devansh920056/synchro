@@ -32,6 +32,9 @@ export const SOCKET_EVENTS = {
   /** Server signals all clients that the game is starting */
   GAME_STARTING: "game:starting",
 
+  /** Server sends each client their personalized puzzle view */
+  GAME_STARTED: "game:started",
+
   // ─── Built-in ─────────────────────────────────────────────────────
   CONNECTION: "connection",
   DISCONNECT: "disconnect",

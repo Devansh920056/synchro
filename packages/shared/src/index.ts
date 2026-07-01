@@ -18,3 +18,19 @@ export type {
   PlayerLeftPayload,
   PlayerJoinedPayload,
 } from "./types";
+
+export {
+  OPERATOR_ROLES,
+  OPERATOR_LABELS,
+  PUZZLE_DATABASE,
+} from "./gameTypes";
+
+export type {
+  OperatorRole,
+  CodeLine,
+  OperatorView,
+  MasterPuzzle,
+  RoleAssignment,
+  GameSession,
+  GameStartedPayload,
+} from "./gameTypes";

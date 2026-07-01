@@ -11,6 +11,8 @@ import { Server, Socket } from "socket.io";
 import cors from "cors";
 import { v4 as uuidv4 } from "uuid";
 
+import { createGameSession, destroySession } from "./gameEngine";
+
 import {
   SOCKET_EVENTS,
   MAX_PLAYERS_PER_ROOM,
@@ -256,6 +258,17 @@ io.on(SOCKET_EVENTS.CONNECTION, (socket: Socket) => {
     console.log(`[GAME] Room "${room.id}" — calibration sequence initiated`);
 
     io.to(room.id).emit(SOCKET_EVENTS.GAME_STARTING, { room });
+
+    // Generate puzzle data and individual operator views
+    const payloads = createGameSession(room.id, room.players);
+
+    // Give the frontend a brief moment to show the "Starting" UI,
+    // then blast the personalized views to each operator
+    setTimeout(() => {
+      for (const [socketId, payload] of payloads) {
+        io.to(socketId).emit(SOCKET_EVENTS.GAME_STARTED, payload);
+      }
+    }, 1500);
   });
 
   // ── DISCONNECT ──────────────────────────────────────────────────
@@ -267,8 +280,9 @@ io.on(SOCKET_EVENTS.CONNECTION, (socket: Socket) => {
 
     const { room, player } = result;
 
-    // Reset game state if someone drops
+    // Reset game state if someone drops and destroy the active session
     room.gameStarted = false;
+    destroySession(room.id);
 
     // Notify remaining players
     const leftPayload: PlayerLeftPayload = {
