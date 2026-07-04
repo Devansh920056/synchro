@@ -20,7 +20,11 @@ import {
   type PlayerJoinedPayload,
   type PlayerLeftPayload,
   type GameStartedPayload,
+  type SelectionPayload,
+  type LockPayload,
+  type OperatorRole,
 } from "@synchro/shared";
+import { CodeLine } from "@/components/CodeLine";
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -48,6 +52,16 @@ export default function SynchroPage() {
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [gameData, setGameData] = useState<GameStartedPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // ── Game State ──────────────────────────────────────────────────
+  const [selectedLine, setSelectedLine] = useState<number | null>(null);
+  const [isLocked, setIsLocked] = useState(false);
+  const [ghostSelections, setGhostSelections] = useState<Record<OperatorRole, number | null>>({
+    operator_1: null,
+    operator_2: null,
+    operator_3: null,
+  });
+  const [puzzleSolved, setPuzzleSolved] = useState(false);
 
   // ── System Logs ─────────────────────────────────────────────────
   const [logs, setLogs] = useState<SystemLog[]>([]);
@@ -112,6 +126,18 @@ export default function SynchroPage() {
       addLog(`CALIBRATION IN PROGRESS — Operator assigned: ${data.view.roleLabel}`, "success");
     };
 
+    const onGhostUpdate = (data: SelectionPayload) => {
+      setGhostSelections((prev) => ({
+        ...prev,
+        [data.operatorRole]: data.selectedLineIndex,
+      }));
+    };
+
+    const onPuzzleSolved = (data: { message: string }) => {
+      setPuzzleSolved(true);
+      addLog(`[SUCCESS] ${data.message}`, "success");
+    };
+
     socket.on(SOCKET_EVENTS.JOIN_SUCCESS, onJoinSuccess);
     socket.on(SOCKET_EVENTS.JOIN_ERROR, onJoinError);
     socket.on(SOCKET_EVENTS.UPDATE_LOBBY, onLobbyUpdate);
@@ -119,6 +145,8 @@ export default function SynchroPage() {
     socket.on(SOCKET_EVENTS.PLAYER_LEFT, onPlayerLeft);
     socket.on(SOCKET_EVENTS.GAME_STARTING, onGameStarting);
     socket.on(SOCKET_EVENTS.GAME_STARTED, onGameStarted);
+    socket.on(SOCKET_EVENTS.TELEMETRY_GHOST_UPDATE, onGhostUpdate);
+    socket.on(SOCKET_EVENTS.GAME_PUZZLE_SOLVED, onPuzzleSolved);
 
     return () => {
       socket.off(SOCKET_EVENTS.JOIN_SUCCESS, onJoinSuccess);
@@ -128,6 +156,8 @@ export default function SynchroPage() {
       socket.off(SOCKET_EVENTS.PLAYER_LEFT, onPlayerLeft);
       socket.off(SOCKET_EVENTS.GAME_STARTING, onGameStarting);
       socket.off(SOCKET_EVENTS.GAME_STARTED, onGameStarted);
+      socket.off(SOCKET_EVENTS.TELEMETRY_GHOST_UPDATE, onGhostUpdate);
+      socket.off(SOCKET_EVENTS.GAME_PUZZLE_SOLVED, onPuzzleSolved);
     };
   }, [socket, addLog]);
 
@@ -188,10 +218,44 @@ export default function SynchroPage() {
     setRoom(null);
     setPlayerId(null);
     setGameData(null);
+    setSelectedLine(null);
+    setIsLocked(false);
+    setGhostSelections({ operator_1: null, operator_2: null, operator_3: null });
+    setPuzzleSolved(false);
     setError(null);
     setLogs([]);
     addLog("Session terminated. Ready for new connection.", "info");
   }, [socket, addLog]);
+
+  const handleLineSelect = useCallback((lineNumber: number) => {
+    if (!socket || !gameData || isLocked || puzzleSolved) return;
+    
+    const newSelection = selectedLine === lineNumber ? null : lineNumber;
+    setSelectedLine(newSelection);
+
+    const payload: SelectionPayload = {
+      roomId: gameData.session.roomId,
+      userId: playerId!,
+      operatorRole: gameData.assignment.role,
+      selectedLineIndex: newSelection
+    };
+    socket.emit(SOCKET_EVENTS.TELEMETRY_LINE_SELECTED, payload);
+  }, [socket, gameData, isLocked, puzzleSolved, selectedLine, playerId]);
+
+  const handleLockSelection = useCallback(() => {
+    if (!socket || !gameData || selectedLine === null || isLocked || puzzleSolved) return;
+
+    setIsLocked(true);
+    addLog(`Locked in line ${selectedLine}. Awaiting teammates...`, "info");
+
+    const payload: LockPayload = {
+      roomId: gameData.session.roomId,
+      userId: playerId!,
+      operatorRole: gameData.assignment.role,
+      lockedLineIndex: selectedLine
+    };
+    socket.emit(SOCKET_EVENTS.GAME_LOCK_SELECTION, payload);
+  }, [socket, gameData, selectedLine, isLocked, puzzleSolved, playerId, addLog]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -642,6 +706,15 @@ export default function SynchroPage() {
                   ))}
                 </div>
                 
+                {selectedLine !== null && !isLocked && !puzzleSolved && (
+                  <button
+                    onClick={handleLockSelection}
+                    className="mt-4 w-full py-3 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500 text-emerald-400 font-bold text-xs tracking-widest uppercase rounded shadow-[0_0_15px_rgba(52,211,153,0.3)] transition-all animate-pulse"
+                  >
+                    LOCK IN SELECTION
+                  </button>
+                )}
+
                 <button
                   onClick={handleDisconnect}
                   className="mt-4 w-full py-2 border border-red-500/30 hover:bg-red-500/10 text-red-400 text-[10px] tracking-wider uppercase rounded transition-colors cursor-pointer"
@@ -661,24 +734,37 @@ export default function SynchroPage() {
                   </div>
                 </div>
                 
-                <div className="p-4 overflow-x-auto flex-1">
-                  <div className="min-w-[500px]">
-                    {gameData.view.lines.map((line, idx) => (
-                      <div
-                        key={idx}
-                        className="flex hover:bg-emerald-900/20 group transition-colors cursor-crosshair rounded py-0.5"
-                      >
-                        <div className="w-8 shrink-0 text-right pr-3 text-neutral-600 select-none border-r border-neutral-800 group-hover:border-emerald-500/30 group-hover:text-emerald-500/50 text-xs pt-0.5">
-                          {line.lineNumber}
-                        </div>
-                        <div
-                          className="pl-4 whitespace-pre text-emerald-400/90 group-hover:text-emerald-300 transition-colors"
-                          style={{ paddingLeft: `${(line.indent || 0) * 0.5 + 1}rem` }}
-                        >
-                          {line.content || " "}
-                        </div>
+                <div className="p-4 overflow-x-auto flex-1 relative">
+                  {puzzleSolved && (
+                    <div className="absolute inset-0 bg-emerald-950/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center p-6 text-center animate-pulse">
+                      <div className="text-emerald-400 font-bold text-2xl tracking-widest mb-2 border border-emerald-500 px-6 py-4 rounded bg-emerald-900/50">
+                        SYSTEM RESTORED
                       </div>
-                    ))}
+                      <div className="text-emerald-300/70 text-xs uppercase tracking-[0.3em]">
+                        Data Alignment Verified
+                      </div>
+                    </div>
+                  )}
+                  <div className="min-w-[500px]">
+                    {gameData.view.lines.map((line) => {
+                      const ghosts = (Object.keys(ghostSelections) as OperatorRole[])
+                        .filter(role => role !== gameData.assignment.role && ghostSelections[role] === line.lineNumber)
+                        .map(role => ({
+                          operatorRole: role,
+                          roleLabel: gameData.crew.find(c => c.role === role)?.roleLabel || role
+                        }));
+
+                      return (
+                        <CodeLine
+                          key={line.lineNumber}
+                          line={line}
+                          isLocalSelected={selectedLine === line.lineNumber}
+                          isLocked={isLocked && selectedLine === line.lineNumber}
+                          ghosts={ghosts}
+                          onSelect={handleLineSelect}
+                        />
+                      );
+                    })}
                   </div>
                 </div>
               </div>

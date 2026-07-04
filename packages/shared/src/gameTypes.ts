@@ -88,6 +88,8 @@ export interface GameSession {
   puzzleTitle: string;
   /** Role assignments mapping each player to an operator */
   assignments: RoleAssignment[];
+  /** Track locked lines by operator role */
+  lockedLines: Partial<Record<OperatorRole, number>>;
   /** Timestamp when the session started */
   startedAt: number;
 }

@@ -34,3 +34,8 @@ export type {
   GameSession,
   GameStartedPayload,
 } from "./gameTypes";
+
+export type {
+  SelectionPayload,
+  LockPayload,
+} from "./telemetryTypes";

@@ -12,6 +12,7 @@ import cors from "cors";
 import { v4 as uuidv4 } from "uuid";
 
 import { createGameSession, destroySession } from "./gameEngine";
+import { registerTelemetryHandlers } from "./telemetryHandler";
 
 import {
   SOCKET_EVENTS,
@@ -142,6 +143,9 @@ function sanitizePlayerName(input: string): string {
 
 io.on(SOCKET_EVENTS.CONNECTION, (socket: Socket) => {
   console.log(`[CONNECT] Socket ${socket.id} connected`);
+
+  // Register telemetry events
+  registerTelemetryHandlers(io, socket);
 
   // ── JOIN ROOM ───────────────────────────────────────────────────
   socket.on(

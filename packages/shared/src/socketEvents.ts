@@ -35,6 +35,19 @@ export const SOCKET_EVENTS = {
   /** Server sends each client their personalized puzzle view */
   GAME_STARTED: "game:started",
 
+  // ─── Telemetry & Locking ──────────────────────────────────────────
+  /** Client informs server they selected/hovered a line */
+  TELEMETRY_LINE_SELECTED: "telemetry:line_selected",
+  
+  /** Server broadcasts ghost selection to other operators in room */
+  TELEMETRY_GHOST_UPDATE: "telemetry:ghost_update",
+
+  /** Client locks in their final line guess */
+  GAME_LOCK_SELECTION: "game:lock_selection",
+
+  /** Server signals all clients that the puzzle has been solved */
+  GAME_PUZZLE_SOLVED: "game:puzzle_solved",
+
   // ─── Built-in ─────────────────────────────────────────────────────
   CONNECTION: "connection",
   DISCONNECT: "disconnect",

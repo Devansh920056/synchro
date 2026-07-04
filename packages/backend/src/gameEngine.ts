@@ -120,6 +120,7 @@ export function createGameSession(
     sharedAlert: puzzle.sharedAlert,
     puzzleTitle: puzzle.title,
     assignments,
+    lockedLines: {},
     startedAt: Date.now(),
   };
 
