@@ -25,6 +25,10 @@ import {
   type OperatorRole,
 } from "@synchro/shared";
 import { CodeLine } from "@/components/CodeLine";
+import { StatusDeck } from "@/components/StatusDeck";
+import { PostMortemView } from "@/components/PostMortemView";
+import { useSession, signIn, signOut } from "next-auth/react";
+import { PostMortemSummaryPayload } from "@synchro/shared";
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -41,9 +45,17 @@ interface SystemLog {
 
 export default function SynchroPage() {
   const { socket, isConnected } = useSocket();
+  const { data: session, status } = useSession();
 
   // ── Form State ──────────────────────────────────────────────────
-  const [operatorName, setOperatorName] = useState("");
+  const [operatorName, setOperatorName] = useState(session?.user?.name || "");
+
+  // Update operatorName if session loads later
+  useEffect(() => {
+    if (session?.user?.name && !operatorName) {
+      setOperatorName(session.user.name);
+    }
+  }, [session, operatorName]);
   const [roomCode, setRoomCode] = useState("");
 
   // ── App State ───────────────────────────────────────────────────
@@ -62,6 +74,8 @@ export default function SynchroPage() {
     operator_3: null,
   });
   const [puzzleSolved, setPuzzleSolved] = useState(false);
+  const [missionFailed, setMissionFailed] = useState(false);
+  const [postMortemSummary, setPostMortemSummary] = useState<PostMortemSummaryPayload | null>(null);
 
   // ── System Logs ─────────────────────────────────────────────────
   const [logs, setLogs] = useState<SystemLog[]>([]);
@@ -138,6 +152,15 @@ export default function SynchroPage() {
       addLog(`[SUCCESS] ${data.message}`, "success");
     };
 
+    const onTimeout = () => {
+      setMissionFailed(true);
+      addLog("[CRITICAL] TIME EXPIRED. CALIBRATION FAILED.", "error");
+    };
+
+    const onPostMortemSummary = (payload: PostMortemSummaryPayload) => {
+      setPostMortemSummary(payload);
+    };
+
     socket.on(SOCKET_EVENTS.JOIN_SUCCESS, onJoinSuccess);
     socket.on(SOCKET_EVENTS.JOIN_ERROR, onJoinError);
     socket.on(SOCKET_EVENTS.UPDATE_LOBBY, onLobbyUpdate);
@@ -147,6 +170,8 @@ export default function SynchroPage() {
     socket.on(SOCKET_EVENTS.GAME_STARTED, onGameStarted);
     socket.on(SOCKET_EVENTS.TELEMETRY_GHOST_UPDATE, onGhostUpdate);
     socket.on(SOCKET_EVENTS.GAME_PUZZLE_SOLVED, onPuzzleSolved);
+    socket.on(SOCKET_EVENTS.GAME_TIMEOUT, onTimeout);
+    socket.on(SOCKET_EVENTS.GAME_POST_MORTEM_SUMMARY, onPostMortemSummary);
 
     return () => {
       socket.off(SOCKET_EVENTS.JOIN_SUCCESS, onJoinSuccess);
@@ -158,6 +183,8 @@ export default function SynchroPage() {
       socket.off(SOCKET_EVENTS.GAME_STARTED, onGameStarted);
       socket.off(SOCKET_EVENTS.TELEMETRY_GHOST_UPDATE, onGhostUpdate);
       socket.off(SOCKET_EVENTS.GAME_PUZZLE_SOLVED, onPuzzleSolved);
+      socket.off(SOCKET_EVENTS.GAME_TIMEOUT, onTimeout);
+      socket.off(SOCKET_EVENTS.GAME_POST_MORTEM_SUMMARY, onPostMortemSummary);
     };
   }, [socket, addLog]);
 
@@ -196,6 +223,7 @@ export default function SynchroPage() {
     const payload: JoinRoomPayload = {
       playerName: trimmedName,
       roomId: trimmedCode,
+      dbUserId: (session?.user as any)?.id,
     };
 
     socket.emit(SOCKET_EVENTS.JOIN_ROOM, payload);
@@ -222,6 +250,8 @@ export default function SynchroPage() {
     setIsLocked(false);
     setGhostSelections({ operator_1: null, operator_2: null, operator_3: null });
     setPuzzleSolved(false);
+    setMissionFailed(false);
+    setPostMortemSummary(null);
     setError(null);
     setLogs([]);
     addLog("Session terminated. Ready for new connection.", "info");
@@ -451,6 +481,45 @@ export default function SynchroPage() {
                     Awaiting server handshake...
                   </p>
                 )}
+
+                {/* Auth Controls */}
+                <div className="pt-4 border-t border-border/50">
+                  {status === "loading" ? (
+                     <p className="text-[10px] text-center text-neutral-600 tracking-wider">Verifying Identity...</p>
+                  ) : session ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <p className="text-[10px] text-center text-emerald-500/70 tracking-wider">
+                        Identified as: {session.user?.name}
+                      </p>
+                      <button
+                        onClick={() => signOut()}
+                        className="text-[10px] text-neutral-500 hover:text-red-400 uppercase tracking-widest transition-colors cursor-pointer"
+                      >
+                        Sign Out
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <p className="text-[10px] text-center text-neutral-500 tracking-wider uppercase mb-1">
+                        Authenticate Identity (Optional)
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => signIn("github")}
+                          className="flex-1 py-2 bg-neutral-900 border border-border hover:border-neutral-500 rounded text-[10px] text-neutral-400 uppercase tracking-widest transition-colors cursor-pointer"
+                        >
+                          GitHub
+                        </button>
+                        <button
+                          onClick={() => signIn("discord")}
+                          className="flex-1 py-2 bg-neutral-900 border border-border hover:border-neutral-500 rounded text-[10px] text-neutral-400 uppercase tracking-widest transition-colors cursor-pointer"
+                        >
+                          Discord
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -678,49 +747,26 @@ export default function SynchroPage() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              {/* Left Panel - Operator Role */}
-              <div className="col-span-1 border border-border rounded-lg bg-surface/80 backdrop-blur-sm p-5 glow-emerald flex flex-col">
-                <div className="text-[10px] tracking-[0.2em] text-neutral-500 uppercase mb-3">
-                  Assignment
-                </div>
-                <div className="px-3 py-2.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs tracking-wider font-bold shadow-[0_0_10px_rgba(52,211,153,0.2)]">
-                  {gameData.view.roleLabel}
-                </div>
-
-                <div className="w-full h-px bg-gradient-to-r from-transparent via-border to-transparent my-5" />
-
-                <div className="text-[10px] tracking-[0.2em] text-neutral-500 uppercase mb-3">
-                  Crew Manifest
-                </div>
-                <div className="space-y-3 flex-1">
-                  {gameData.crew.map((c) => (
-                    <div key={c.role} className="flex items-center gap-2">
-                      <div className={`w-1.5 h-1.5 rounded-full ${c.role === gameData.assignment.role ? "bg-emerald-400 animate-pulse" : "bg-neutral-600"}`} />
-                      <div className="flex flex-col">
-                        <span className={`text-xs ${c.role === gameData.assignment.role ? "text-emerald-400 font-bold" : "text-neutral-300"}`}>
-                          {c.playerName} {c.role === gameData.assignment.role && "(YOU)"}
-                        </span>
-                        <span className="text-[9px] text-neutral-500 tracking-wider">{c.roleLabel}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+              {postMortemSummary && (
+                <PostMortemView summary={postMortemSummary} socket={socket} />
+              )}
+              {/* Left Panel - Status & Voice */}
+              <div className="col-span-1 flex flex-col gap-4">
+                <StatusDeck 
+                  socket={socket} 
+                  gameData={gameData} 
+                  isActiveApp={appState === "active"} 
+                  onDisconnect={handleDisconnect} 
+                />
                 
-                {selectedLine !== null && !isLocked && !puzzleSolved && (
+                {selectedLine !== null && !isLocked && !puzzleSolved && !missionFailed && (
                   <button
                     onClick={handleLockSelection}
-                    className="mt-4 w-full py-3 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500 text-emerald-400 font-bold text-xs tracking-widest uppercase rounded shadow-[0_0_15px_rgba(52,211,153,0.3)] transition-all animate-pulse"
+                    className="w-full py-3 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500 text-emerald-400 font-bold text-xs tracking-widest uppercase rounded shadow-[0_0_15px_rgba(52,211,153,0.3)] transition-all animate-pulse cursor-pointer"
                   >
                     LOCK IN SELECTION
                   </button>
                 )}
-
-                <button
-                  onClick={handleDisconnect}
-                  className="mt-4 w-full py-2 border border-red-500/30 hover:bg-red-500/10 text-red-400 text-[10px] tracking-wider uppercase rounded transition-colors cursor-pointer"
-                >
-                  ABORT MISSION
-                </button>
               </div>
 
               {/* Center Workspace - Code/Text Lines */}
@@ -736,13 +782,29 @@ export default function SynchroPage() {
                 
                 <div className="p-4 overflow-x-auto flex-1 relative">
                   {puzzleSolved && (
-                    <div className="absolute inset-0 bg-emerald-950/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center p-6 text-center animate-pulse">
+                    <div className="absolute inset-0 bg-emerald-950/90 backdrop-blur-sm z-10 flex flex-col items-center justify-center p-6 text-center animate-pulse">
                       <div className="text-emerald-400 font-bold text-2xl tracking-widest mb-2 border border-emerald-500 px-6 py-4 rounded bg-emerald-900/50">
                         SYSTEM RESTORED
                       </div>
                       <div className="text-emerald-300/70 text-xs uppercase tracking-[0.3em]">
                         Data Alignment Verified
                       </div>
+                    </div>
+                  )}
+                  {missionFailed && (
+                    <div className="absolute inset-0 bg-red-950/90 backdrop-blur-sm z-10 flex flex-col items-center justify-center p-6 text-center animate-pulse">
+                      <div className="text-red-400 font-bold text-3xl tracking-widest mb-2 border border-red-500 px-6 py-4 rounded bg-red-900/50 shadow-[0_0_30px_rgba(239,68,68,0.3)]">
+                        MISSION FAILED
+                      </div>
+                      <div className="text-red-300/70 text-sm uppercase tracking-[0.3em]">
+                        System Compromised
+                      </div>
+                      <button
+                        onClick={handleDisconnect}
+                        className="mt-8 px-8 py-3 border border-red-500/30 hover:bg-red-500/10 text-red-400 text-xs tracking-widest uppercase rounded transition-colors cursor-pointer"
+                      >
+                        RETURN TO LOBBY
+                      </button>
                     </div>
                   )}
                   <div className="min-w-[500px]">

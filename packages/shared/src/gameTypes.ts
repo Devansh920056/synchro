@@ -74,6 +74,7 @@ export interface RoleAssignment {
   playerId: string;
   playerName: string;
   role: OperatorRole;
+  dbUserId?: string;
 }
 
 /** The full game session state for a room */
@@ -112,6 +113,7 @@ export interface GameStartedPayload {
   view: OperatorView;
   /** The names/roles of all operators (without their view data) */
   crew: Array<{
+    socketId: string;
     playerName: string;
     role: OperatorRole;
     roleLabel: string;

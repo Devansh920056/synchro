@@ -6,14 +6,10 @@
  */
 
 import { Server, Socket } from "socket.io";
-import {
-  SOCKET_EVENTS,
-  SelectionPayload,
-  LockPayload,
-  OPERATOR_ROLES,
-  PUZZLE_DATABASE,
-} from "@synchro/shared";
+import { SOCKET_EVENTS, SelectionPayload, LockPayload, OPERATOR_ROLES, PUZZLE_DATABASE } from "@synchro/shared";
 import { getSession } from "./gameEngine";
+import { stopGameTimer } from "./timer";
+import { handleGameEnd } from "./postMortem";
 
 export function registerTelemetryHandlers(io: Server, socket: Socket) {
   // ─── GHOST HIGHLIGHTS (TELEMETRY) ─────────────────────────────────
@@ -54,9 +50,12 @@ export function registerTelemetryHandlers(io: Server, socket: Socket) {
 
       if (isCorrect) {
         console.log(`[GAME] Room "${payload.roomId}" — CALIBRATION SUCCESSFUL!`);
+        stopGameTimer(payload.roomId);
         io.to(payload.roomId).emit(SOCKET_EVENTS.GAME_PUZZLE_SOLVED, {
           message: "Data Alignment Complete. System Restored.",
         });
+        // Run post mortem for win
+        handleGameEnd(payload.roomId, true, io);
       } else {
         console.log(`[GAME] Room "${payload.roomId}" — CALIBRATION FAILED! Incorrect mismatch selected.`);
         // For now, if they fail, we can just log it or unlock them.

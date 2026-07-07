@@ -1,9 +1,58 @@
+# dependencies
 node_modules/
-dist/
+.pnp
+.pnp.js
+
+# testing
+coverage/
+
+# next.js
 .next/
+out/
+build/
+
+# production
+dist/
+build/
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# local env files
 .env
 .env.local
-*.log
-.DS_Store
-.turbo
+.env.development.local
+.env.test.local
+.env.production.local
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+
+# turborepo
+.turbo/
+
+# IDEs and editors
+.idea/
 .vscode/
+*.swp
+*.swo
+
+# Prisma
+# Ignore Prisma SQLite databases (if used in the future)
+*.db
+*.db-journal
+
+# Ignore local media/uploads if applicable
+uploads/
+public/uploads/

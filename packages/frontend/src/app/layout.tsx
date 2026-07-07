@@ -19,6 +19,8 @@ export const metadata: Metadata = {
   keywords: ["synchro", "multiplayer", "puzzle", "co-op", "calibration"],
 };
 
+import { Providers } from "@/components/Providers";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -30,7 +32,7 @@ export default function RootLayout({
       className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-neutral-950 text-neutral-100 font-mono selection:bg-emerald-500/30">
-        {children}
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

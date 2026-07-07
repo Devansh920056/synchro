@@ -48,6 +48,30 @@ export const SOCKET_EVENTS = {
   /** Server signals all clients that the puzzle has been solved */
   GAME_PUZZLE_SOLVED: "game:puzzle_solved",
 
+  // ─── WebRTC Audio Signaling ───────────────────────────────────────
+  /** Peer sends an SDP offer */
+  WEBRTC_OFFER: "webrtc:offer",
+  
+  /** Peer replies with an SDP answer */
+  WEBRTC_ANSWER: "webrtc:answer",
+  
+  /** Peer sends an ICE candidate for NAT traversal */
+  WEBRTC_ICE_CANDIDATE: "webrtc:ice_candidate",
+
+  // ─── Server Timer ─────────────────────────────────────────────────
+  /** Server emits countdown tick */
+  TIMER_TICK: "timer:tick",
+  
+  /** Server emits timeout failure */
+  GAME_TIMEOUT: "game:timeout",
+
+  // ─── Post-Mortem & Lobby Controls ─────────────────────────────────
+  /** Server broadcasts end-of-game summary with full views */
+  GAME_POST_MORTEM_SUMMARY: "game:post_mortem_summary",
+  
+  /** Client requests to re-queue the current crew into a new match */
+  ROOM_REQUEUE: "room:requeue",
+
   // ─── Built-in ─────────────────────────────────────────────────────
   CONNECTION: "connection",
   DISCONNECT: "disconnect",

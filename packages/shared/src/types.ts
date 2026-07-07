@@ -15,6 +15,8 @@ export interface Player {
   name: string;
   /** The Socket.IO socket ID for this connection */
   socketId: string;
+  /** The authenticated database User ID (if logged in) */
+  dbUserId?: string;
 }
 
 /** Represents an active game room / calibration deck */
@@ -35,6 +37,7 @@ export interface Room {
 export interface JoinRoomPayload {
   roomId: string;
   playerName: string;
+  dbUserId?: string;
 }
 
 /** Payload sent by server on successful join */

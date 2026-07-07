@@ -13,6 +13,8 @@ import { v4 as uuidv4 } from "uuid";
 
 import { createGameSession, destroySession } from "./gameEngine";
 import { registerTelemetryHandlers } from "./telemetryHandler";
+import { registerAudioSignalingHandlers } from "./audioSignaling";
+import { startGameTimer, stopGameTimer } from "./timer";
 
 import {
   SOCKET_EVENTS,
@@ -125,6 +127,7 @@ function removePlayerFromRoom(
   // Clean up empty rooms to prevent memory leaks
   if (room.players.length === 0) {
     rooms.delete(room.id);
+    stopGameTimer(room.id);
     console.log(`[ROOM] Deleted empty room "${room.id}"`);
   }
 
@@ -144,8 +147,9 @@ function sanitizePlayerName(input: string): string {
 io.on(SOCKET_EVENTS.CONNECTION, (socket: Socket) => {
   console.log(`[CONNECT] Socket ${socket.id} connected`);
 
-  // Register telemetry events
+  // Register telemetry and signaling events
   registerTelemetryHandlers(io, socket);
+  registerAudioSignalingHandlers(io, socket);
 
   // ── JOIN ROOM ───────────────────────────────────────────────────
   socket.on(
@@ -205,6 +209,7 @@ io.on(SOCKET_EVENTS.CONNECTION, (socket: Socket) => {
         id: uuidv4(),
         name: playerName,
         socketId: socket.id,
+        dbUserId: payload.dbUserId,
       };
 
       room.players.push(player);
@@ -272,6 +277,40 @@ io.on(SOCKET_EVENTS.CONNECTION, (socket: Socket) => {
       for (const [socketId, payload] of payloads) {
         io.to(socketId).emit(SOCKET_EVENTS.GAME_STARTED, payload);
       }
+      
+      // Start the 60 second countdown timer
+      startGameTimer(room.id, io, 60);
+    }, 1500);
+  });
+
+  // ── REQUEUE GAME ────────────────────────────────────────────────
+  socket.on(SOCKET_EVENTS.ROOM_REQUEUE, () => {
+    const mapping = socketToPlayer.get(socket.id);
+    if (!mapping) return;
+
+    const room = rooms.get(mapping.roomId);
+    if (!room) return;
+
+    // Must be full to start again
+    if (room.players.length < MAX_PLAYERS_PER_ROOM) {
+      return;
+    }
+
+    // Reset game state and destroy previous session
+    room.gameStarted = true;
+    destroySession(room.id);
+    console.log(`[GAME] Room "${room.id}" — requeue initiated`);
+
+    io.to(room.id).emit(SOCKET_EVENTS.GAME_STARTING, { room });
+
+    // Generate puzzle data and individual operator views
+    const payloads = createGameSession(room.id, room.players);
+
+    setTimeout(() => {
+      for (const [socketId, payload] of payloads) {
+        io.to(socketId).emit(SOCKET_EVENTS.GAME_STARTED, payload);
+      }
+      startGameTimer(room.id, io, 60);
     }, 1500);
   });
 

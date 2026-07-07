@@ -68,6 +68,7 @@ function assignRoles(players: Player[]): RoleAssignment[] {
     playerId: player.id,
     playerName: player.name,
     role: shuffledRoles[index],
+    dbUserId: player.dbUserId,
   }));
 }
 
@@ -139,6 +140,7 @@ export function createGameSession(
 
   // Build the crew roster (visible to everyone, no view data)
   const crew = assignments.map((a) => ({
+    socketId: a.socketId,
     playerName: a.playerName,
     role: a.role,
     roleLabel: OPERATOR_LABELS[a.role],
