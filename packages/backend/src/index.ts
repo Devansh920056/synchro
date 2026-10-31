@@ -1,8 +1,8 @@
 /**
  * @synchro/backend — Main Server Entry Point
  *
- * Express + Socket.IO server handling room creation, player joins,
- * lobby state broadcasting, and disconnect cleanup.
+ * Express + Socket.IO server handling rooms, lobby updates,
+ * starting/restarting rounds and disconnect cleanup.
  */
 
 import express from "express";
@@ -11,7 +11,7 @@ import { Server, Socket } from "socket.io";
 import cors from "cors";
 import { v4 as uuidv4 } from "uuid";
 
-import { createGameSession, destroySession } from "./gameEngine";
+import { createGameSession, destroySession, getSession } from "./gameEngine";
 import { registerTelemetryHandlers } from "./telemetryHandler";
 import { registerAudioSignalingHandlers } from "./audioSignaling";
 import { startGameTimer, stopGameTimer } from "./timer";
@@ -33,22 +33,23 @@ import {
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:3000";
+const GAME_DURATION_SECONDS = 60;
+/** Short pause so every client can show its "starting" screen first */
+const GAME_START_DELAY_MS = 1500;
 
 // ─── Express + HTTP Server ──────────────────────────────────────────
 
 const app = express();
 
-app.use(
-  cors({
-    origin: CLIENT_ORIGIN,
-    methods: ["GET", "POST"],
-    credentials: true,
-  })
-);
-
+app.use(cors({ origin: CLIENT_ORIGIN, methods: ["GET", "POST"], credentials: true }));
 app.use(express.json());
 
-/** Health check endpoint */
+/** In-memory room storage */
+const rooms = new Map<string, Room>();
+
+/** socket ID → { roomId, playerId }, for fast cleanup without scanning every room */
+const socketToPlayer = new Map<string, { roomId: string; playerId: string }>();
+
 app.get("/health", (_req, res) => {
   res.json({
     status: "online",
@@ -60,94 +61,107 @@ app.get("/health", (_req, res) => {
 
 const httpServer = createServer(app);
 
-// ─── Socket.IO Server ──────────────────────────────────────────────
-
 const io = new Server(httpServer, {
-  cors: {
-    origin: CLIENT_ORIGIN,
-    methods: ["GET", "POST"],
-    credentials: true,
-  },
+  cors: { origin: CLIENT_ORIGIN, methods: ["GET", "POST"], credentials: true },
   pingInterval: 10000,
   pingTimeout: 5000,
 });
 
-// ─── In-Memory Room Storage ─────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────
 
-const rooms: Map<string, Room> = new Map();
-
-/**
- * Maps a socket ID → { roomId, playerId } for fast disconnect cleanup.
- * Without this we'd need to scan every room on every disconnect.
- */
-const socketToPlayer: Map<string, { roomId: string; playerId: string }> =
-  new Map();
-
-// ─── Helper Functions ───────────────────────────────────────────────
-
-function getOrCreateRoom(roomId: string): Room {
-  const existing = rooms.get(roomId);
-  if (existing) return existing;
-
-  const newRoom: Room = {
-    id: roomId,
-    players: [],
-    createdAt: Date.now(),
-    gameStarted: false,
-  };
-
-  rooms.set(roomId, newRoom);
-  console.log(`[ROOM] Created room "${roomId}"`);
-  return newRoom;
+function sanitizeRoomId(input: unknown): string {
+  if (typeof input !== "string") return "";
+  return input.trim().toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 20);
 }
 
-function removePlayerFromRoom(
-  socketId: string
-): { room: Room; player: Player } | null {
-  const mapping = socketToPlayer.get(socketId);
+function sanitizePlayerName(input: unknown): string {
+  if (typeof input !== "string") return "";
+  return input
+    .replace(/[^\p{L}\p{N}_\-\s]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 24);
+}
+
+/** Sends a friendly error to one client and (optionally) answers its callback */
+function sendError(
+  socket: Socket,
+  message: string,
+  callback?: (data: JoinErrorPayload) => void
+) {
+  const error: JoinErrorPayload = { message };
+  socket.emit(SOCKET_EVENTS.JOIN_ERROR, error);
+  callback?.(error);
+}
+
+/** Removes a player from their room. Cancels any round in progress. */
+function leaveCurrentRoom(socket: Socket): { room: Room; player: Player } | null {
+  const mapping = socketToPlayer.get(socket.id);
   if (!mapping) return null;
+  socketToPlayer.delete(socket.id);
 
   const room = rooms.get(mapping.roomId);
-  if (!room) {
-    socketToPlayer.delete(socketId);
-    return null;
-  }
+  if (!room) return null;
 
-  const playerIndex = room.players.findIndex(
-    (p) => p.id === mapping.playerId
-  );
-  if (playerIndex === -1) {
-    socketToPlayer.delete(socketId);
-    return null;
-  }
+  const index = room.players.findIndex((p) => p.id === mapping.playerId);
+  if (index === -1) return null;
 
-  const [removedPlayer] = room.players.splice(playerIndex, 1);
-  socketToPlayer.delete(socketId);
+  const [player] = room.players.splice(index, 1);
+  socket.leave(room.id);
 
-  // Clean up empty rooms to prevent memory leaks
+  // Someone left, so any round in progress can't continue
+  room.gameStarted = false;
+  stopGameTimer(room.id);
+  destroySession(room.id);
+
   if (room.players.length === 0) {
-    rooms.delete(room.id);
-    stopGameTimer(room.id);
+    rooms.delete(room.id); // avoid leaking empty rooms
     console.log(`[ROOM] Deleted empty room "${room.id}"`);
+  } else {
+    const left: PlayerLeftPayload = { playerId: player.id, playerName: player.name, room };
+    io.to(room.id).emit(SOCKET_EVENTS.PLAYER_LEFT, left);
+    const lobby: LobbyUpdatePayload = { room };
+    io.to(room.id).emit(SOCKET_EVENTS.UPDATE_LOBBY, lobby);
   }
 
-  return { room, player: removedPlayer };
+  console.log(
+    `[LEAVE] "${player.name}" left room "${room.id}" [${room.players.length}/${MAX_PLAYERS_PER_ROOM}]`
+  );
+  return { room, player };
 }
 
-function sanitizeRoomId(input: string): string {
-  return input.trim().toUpperCase().replace(/[^A-Z0-9\-]/g, "").slice(0, 20);
+/** Starts a fresh round for a full room (used by both Start and Play Again) */
+function launchGame(room: Room) {
+  room.gameStarted = true;
+  stopGameTimer(room.id);
+  destroySession(room.id);
+
+  io.to(room.id).emit(SOCKET_EVENTS.GAME_STARTING, { room });
+
+  const payloads = createGameSession(room.id, room.players);
+  const session = getSession(room.id);
+
+  setTimeout(() => {
+    // Cancelled in the meantime (someone left or a newer round replaced it)
+    if (!session || getSession(room.id) !== session) return;
+
+    for (const [socketId, payload] of payloads) {
+      io.to(socketId).emit(SOCKET_EVENTS.GAME_STARTED, payload);
+    }
+    startGameTimer(room.id, io, GAME_DURATION_SECONDS);
+  }, GAME_START_DELAY_MS);
 }
 
-function sanitizePlayerName(input: string): string {
-  return input.trim().replace(/[^a-zA-Z0-9_\-\s]/g, "").slice(0, 24);
+function getRoomOf(socket: Socket): Room | undefined {
+  const mapping = socketToPlayer.get(socket.id);
+  return mapping ? rooms.get(mapping.roomId) : undefined;
 }
 
 // ─── Socket.IO Connection Handler ───────────────────────────────────
 
 io.on(SOCKET_EVENTS.CONNECTION, (socket: Socket) => {
-  console.log(`[CONNECT] Socket ${socket.id} connected`);
+  console.log(`[CONNECT] ${socket.id}`);
 
-  // Register telemetry and signaling events
   registerTelemetryHandlers(io, socket);
   registerAudioSignalingHandlers(io, socket);
 
@@ -155,207 +169,121 @@ io.on(SOCKET_EVENTS.CONNECTION, (socket: Socket) => {
   socket.on(
     SOCKET_EVENTS.JOIN_ROOM,
     (payload: JoinRoomPayload, callback?: (data: JoinSuccessPayload | JoinErrorPayload) => void) => {
-      const roomId = sanitizeRoomId(payload.roomId);
-      const playerName = sanitizePlayerName(payload.playerName);
+      const roomId = sanitizeRoomId(payload?.roomId);
+      const playerName = sanitizePlayerName(payload?.playerName);
 
-      // Validation
-      if (!roomId || roomId.length < 2) {
-        const error: JoinErrorPayload = {
-          message: "INVALID ROOM CODE — must be at least 2 characters.",
-        };
-        socket.emit(SOCKET_EVENTS.JOIN_ERROR, error);
-        callback?.(error);
-        return;
+      if (roomId.length < 2) {
+        return sendError(socket, "Room code must be at least 2 characters (letters, numbers or dashes).", callback);
+      }
+      if (!playerName) {
+        return sendError(socket, "Please enter a name.", callback);
       }
 
-      if (!playerName || playerName.length < 1) {
-        const error: JoinErrorPayload = {
-          message: "INVALID OPERATOR NAME — cannot be empty.",
-        };
-        socket.emit(SOCKET_EVENTS.JOIN_ERROR, error);
-        callback?.(error);
-        return;
+      // Joining a new room means leaving the old one
+      if (socketToPlayer.has(socket.id)) leaveCurrentRoom(socket);
+
+      const existing = rooms.get(roomId);
+
+      if (existing) {
+        if (existing.players.length >= MAX_PLAYERS_PER_ROOM) {
+          return sendError(socket, `Room "${roomId}" is full (${MAX_PLAYERS_PER_ROOM} players max). Try another code.`, callback);
+        }
+        if (existing.gameStarted) {
+          return sendError(socket, `A game is already running in room "${roomId}". Try another code.`, callback);
+        }
+        if (existing.players.some((p) => p.name.toLowerCase() === playerName.toLowerCase())) {
+          return sendError(socket, `Someone in room "${roomId}" is already called "${playerName}". Pick a different name.`, callback);
+        }
       }
 
-      const room = getOrCreateRoom(roomId);
-
-      // Check capacity
-      if (room.players.length >= MAX_PLAYERS_PER_ROOM) {
-        const error: JoinErrorPayload = {
-          message: `ROOM "${roomId}" IS FULL — maximum ${MAX_PLAYERS_PER_ROOM} operators.`,
-        };
-        socket.emit(SOCKET_EVENTS.JOIN_ERROR, error);
-        callback?.(error);
-        return;
-      }
-
-      // Check for duplicate names in the same room
-      if (room.players.some((p) => p.name.toLowerCase() === playerName.toLowerCase())) {
-        const error: JoinErrorPayload = {
-          message: `OPERATOR NAME "${playerName}" already registered in room "${roomId}".`,
-        };
-        socket.emit(SOCKET_EVENTS.JOIN_ERROR, error);
-        callback?.(error);
-        return;
-      }
-
-      // Check if this socket is already in a room (prevent double-join)
-      if (socketToPlayer.has(socket.id)) {
-        removePlayerFromRoom(socket.id);
-      }
-
-      // Create the player
-      const player: Player = {
-        id: uuidv4(),
-        name: playerName,
-        socketId: socket.id,
-        dbUserId: payload.dbUserId,
+      const room: Room = existing ?? {
+        id: roomId,
+        players: [],
+        createdAt: Date.now(),
+        gameStarted: false,
       };
+      if (!existing) {
+        rooms.set(roomId, room);
+        console.log(`[ROOM] Created room "${roomId}"`);
+      }
 
+      const dbUserId =
+        typeof payload.dbUserId === "string" && payload.dbUserId.length <= 64
+          ? payload.dbUserId
+          : undefined;
+
+      const player: Player = { id: uuidv4(), name: playerName, socketId: socket.id, dbUserId };
       room.players.push(player);
       socketToPlayer.set(socket.id, { roomId: room.id, playerId: player.id });
-
-      // Join the Socket.IO room for targeted broadcasts
-      socket.join(roomId);
+      socket.join(room.id);
 
       console.log(
-        `[JOIN] "${playerName}" (${player.id}) joined room "${roomId}" ` +
-          `[${room.players.length}/${MAX_PLAYERS_PER_ROOM}]`
+        `[JOIN] "${playerName}" joined room "${roomId}" [${room.players.length}/${MAX_PLAYERS_PER_ROOM}]`
       );
 
-      // Confirm to the joining client
-      const successPayload: JoinSuccessPayload = {
-        playerId: player.id,
-        room,
-      };
-      socket.emit(SOCKET_EVENTS.JOIN_SUCCESS, successPayload);
-      callback?.(successPayload);
+      const success: JoinSuccessPayload = { playerId: player.id, room };
+      socket.emit(SOCKET_EVENTS.JOIN_SUCCESS, success);
+      callback?.(success);
 
-      // Broadcast to other players in the room
-      const joinedPayload: PlayerJoinedPayload = { player, room };
-      socket.to(roomId).emit(SOCKET_EVENTS.PLAYER_JOINED, joinedPayload);
+      const joined: PlayerJoinedPayload = { player, room };
+      socket.to(room.id).emit(SOCKET_EVENTS.PLAYER_JOINED, joined);
 
-      // Broadcast updated lobby state to everyone in the room
-      const lobbyPayload: LobbyUpdatePayload = { room };
-      io.to(roomId).emit(SOCKET_EVENTS.UPDATE_LOBBY, lobbyPayload);
+      const lobby: LobbyUpdatePayload = { room };
+      io.to(room.id).emit(SOCKET_EVENTS.UPDATE_LOBBY, lobby);
     }
   );
 
   // ── START GAME ──────────────────────────────────────────────────
   socket.on(SOCKET_EVENTS.START_GAME, () => {
-    const mapping = socketToPlayer.get(socket.id);
-    if (!mapping) return;
-
-    const room = rooms.get(mapping.roomId);
+    const room = getRoomOf(socket);
     if (!room) return;
 
     if (room.players.length < MAX_PLAYERS_PER_ROOM) {
-      socket.emit(SOCKET_EVENTS.JOIN_ERROR, {
-        message: `Cannot start — need exactly ${MAX_PLAYERS_PER_ROOM} operators.`,
-      } satisfies JoinErrorPayload);
-      return;
+      return sendError(socket, `You need ${MAX_PLAYERS_PER_ROOM} players to start.`);
     }
-
     if (room.gameStarted) {
-      socket.emit(SOCKET_EVENTS.JOIN_ERROR, {
-        message: "Calibration sequence already initiated.",
-      } satisfies JoinErrorPayload);
-      return;
+      return sendError(socket, "The game has already started.");
     }
 
-    room.gameStarted = true;
-    console.log(`[GAME] Room "${room.id}" — calibration sequence initiated`);
-
-    io.to(room.id).emit(SOCKET_EVENTS.GAME_STARTING, { room });
-
-    // Generate puzzle data and individual operator views
-    const payloads = createGameSession(room.id, room.players);
-
-    // Give the frontend a brief moment to show the "Starting" UI,
-    // then blast the personalized views to each operator
-    setTimeout(() => {
-      for (const [socketId, payload] of payloads) {
-        io.to(socketId).emit(SOCKET_EVENTS.GAME_STARTED, payload);
-      }
-      
-      // Start the 60 second countdown timer
-      startGameTimer(room.id, io, 60);
-    }, 1500);
+    console.log(`[GAME] Room "${room.id}" — starting`);
+    launchGame(room);
   });
 
-  // ── REQUEUE GAME ────────────────────────────────────────────────
+  // ── PLAY AGAIN ──────────────────────────────────────────────────
   socket.on(SOCKET_EVENTS.ROOM_REQUEUE, () => {
-    const mapping = socketToPlayer.get(socket.id);
-    if (!mapping) return;
+    const room = getRoomOf(socket);
+    if (!room || room.players.length < MAX_PLAYERS_PER_ROOM) return;
 
-    const room = rooms.get(mapping.roomId);
-    if (!room) return;
+    // A round is still running, so ignore (also stops double-clicks from restarting twice)
+    if (getSession(room.id)) return;
 
-    // Must be full to start again
-    if (room.players.length < MAX_PLAYERS_PER_ROOM) {
-      return;
-    }
-
-    // Reset game state and destroy previous session
-    room.gameStarted = true;
-    destroySession(room.id);
-    console.log(`[GAME] Room "${room.id}" — requeue initiated`);
-
-    io.to(room.id).emit(SOCKET_EVENTS.GAME_STARTING, { room });
-
-    // Generate puzzle data and individual operator views
-    const payloads = createGameSession(room.id, room.players);
-
-    setTimeout(() => {
-      for (const [socketId, payload] of payloads) {
-        io.to(socketId).emit(SOCKET_EVENTS.GAME_STARTED, payload);
-      }
-      startGameTimer(room.id, io, 60);
-    }, 1500);
+    console.log(`[GAME] Room "${room.id}" — playing again`);
+    launchGame(room);
   });
 
   // ── DISCONNECT ──────────────────────────────────────────────────
   socket.on(SOCKET_EVENTS.DISCONNECT, (reason: string) => {
-    console.log(`[DISCONNECT] Socket ${socket.id} — reason: ${reason}`);
-
-    const result = removePlayerFromRoom(socket.id);
-    if (!result) return;
-
-    const { room, player } = result;
-
-    // Reset game state if someone drops and destroy the active session
-    room.gameStarted = false;
-    destroySession(room.id);
-
-    // Notify remaining players
-    const leftPayload: PlayerLeftPayload = {
-      playerId: player.id,
-      playerName: player.name,
-      room,
-    };
-    io.to(room.id).emit(SOCKET_EVENTS.PLAYER_LEFT, leftPayload);
-
-    // Broadcast updated lobby state
-    const lobbyPayload: LobbyUpdatePayload = { room };
-    io.to(room.id).emit(SOCKET_EVENTS.UPDATE_LOBBY, lobbyPayload);
-
-    console.log(
-      `[LEAVE] "${player.name}" left room "${room.id}" ` +
-        `[${room.players.length}/${MAX_PLAYERS_PER_ROOM}]`
-    );
+    console.log(`[DISCONNECT] ${socket.id} — ${reason}`);
+    leaveCurrentRoom(socket);
   });
 });
 
 // ─── Start Server ───────────────────────────────────────────────────
 
 httpServer.listen(PORT, () => {
+  const row = (text: string) => `│  ${text.padEnd(44)}│`;
   console.log("");
-  console.log("╔══════════════════════════════════════════════╗");
-  console.log("║       SYNCHRO — Calibration Server           ║");
-  console.log("╠══════════════════════════════════════════════╣");
-  console.log(`║  Status:  ONLINE                              ║`);
-  console.log(`║  Port:    ${String(PORT).padEnd(36)}║`);
-  console.log(`║  Client:  ${CLIENT_ORIGIN.padEnd(36)}║`);
-  console.log("╚══════════════════════════════════════════════╝");
+  console.log("┌" + "─".repeat(46) + "┐");
+  console.log(row("SYNCHRO game server"));
+  console.log("├" + "─".repeat(46) + "┤");
+  console.log(row("Status:  online"));
+  console.log(row(`Port:    ${PORT}`));
+  console.log(row(`Client:  ${CLIENT_ORIGIN}`));
+  console.log("└" + "─".repeat(46) + "┘");
   console.log("");
+});
+
+// Log unexpected errors instead of letting one bad event take the whole server down
+process.on("unhandledRejection", (reason) => {
+  console.error("[ERROR] Unhandled promise rejection:", reason);
 });

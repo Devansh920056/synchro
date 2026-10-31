@@ -1,67 +1,89 @@
 /**
  * @synchro/backend — Telemetry & Selection Handler
  *
- * Highly optimized sub-50ms handlers for live ghost selections.
- * Also handles the stateful locking logic and verifying puzzle completion.
+ * Relays live "ghost" selections to teammates and handles locking in,
+ * then checks whether all three operators found the mismatch.
+ *
+ * The server never trusts the role or room a client claims: both are
+ * looked up from the session, so a player can't act as someone else.
  */
 
 import { Server, Socket } from "socket.io";
-import { SOCKET_EVENTS, SelectionPayload, LockPayload, OPERATOR_ROLES, PUZZLE_DATABASE } from "@synchro/shared";
-import { getSession } from "./gameEngine";
+import {
+  SOCKET_EVENTS,
+  OPERATOR_ROLES,
+  PUZZLE_DATABASE,
+  type SelectionPayload,
+  type LockPayload,
+  type LockResetPayload,
+} from "@synchro/shared";
+import { getSession, getAssignment } from "./gameEngine";
 import { stopGameTimer } from "./timer";
 import { handleGameEnd } from "./postMortem";
 
 export function registerTelemetryHandlers(io: Server, socket: Socket) {
-  // ─── GHOST HIGHLIGHTS (TELEMETRY) ─────────────────────────────────
+  // ─── GHOST HIGHLIGHTS ─────────────────────────────────────────────
   socket.on(SOCKET_EVENTS.TELEMETRY_LINE_SELECTED, (payload: SelectionPayload) => {
-    // We explicitly use socket.to(roomId).emit to broadcast to EVERYONE ELSE
-    // in the room. The sender already knows what they selected.
-    // This is the fastest path for real-time visual feedback.
-    socket.to(payload.roomId).emit(SOCKET_EVENTS.TELEMETRY_GHOST_UPDATE, payload);
+    const roomId = payload?.roomId;
+    if (typeof roomId !== "string" || !socket.rooms.has(roomId)) return;
+
+    const me = getAssignment(roomId, socket.id);
+    if (!me) return;
+
+    const index = payload.selectedLineIndex;
+    if (index !== null && !Number.isInteger(index)) return;
+
+    // Send to everyone else in the room (the sender already knows)
+    const ghost: SelectionPayload = {
+      roomId,
+      userId: me.playerId,
+      operatorRole: me.role,
+      selectedLineIndex: index,
+    };
+    socket.to(roomId).emit(SOCKET_EVENTS.TELEMETRY_GHOST_UPDATE, ghost);
   });
 
-  // ─── SELECTION LOCKING & VERIFICATION ─────────────────────────────
+  // ─── LOCKING & VERIFICATION ───────────────────────────────────────
   socket.on(SOCKET_EVENTS.GAME_LOCK_SELECTION, (payload: LockPayload) => {
-    const session = getSession(payload.roomId);
-    if (!session) return;
+    const roomId = payload?.roomId;
+    if (typeof roomId !== "string" || !socket.rooms.has(roomId)) return;
 
-    // 1. Record the lock
-    session.lockedLines[payload.operatorRole] = payload.lockedLineIndex;
-    console.log(`[GAME] Operator "${payload.operatorRole}" locked line ${payload.lockedLineIndex} in room "${payload.roomId}"`);
+    const session = getSession(roomId);
+    const me = getAssignment(roomId, socket.id);
+    if (!session || !me) return;
 
-    // 2. Check if all 3 operators have locked in their guesses
+    // Each operator can only lock once per attempt
+    if (session.lockedLines[me.role] !== undefined) return;
+    if (!Number.isInteger(payload.lockedLineIndex)) return;
+
+    session.lockedLines[me.role] = payload.lockedLineIndex;
+    console.log(`[GAME] ${me.role} locked line ${payload.lockedLineIndex} in room "${roomId}"`);
+
     const allLocked = OPERATOR_ROLES.every((role) => session.lockedLines[role] !== undefined);
-    
-    if (allLocked) {
-      console.log(`[GAME] Room "${payload.roomId}" — All operators locked. Verifying alignment...`);
-      
-      // 3. Retrieve the master puzzle to check correctness
-      const masterPuzzle = PUZZLE_DATABASE.find(p => p.id === session.puzzleId);
-      if (!masterPuzzle) return;
+    if (!allLocked) return;
 
-      // 4. Verify each operator's locked line matches the intended mismatch
-      const isCorrect = OPERATOR_ROLES.every((role) => {
-        const lockedIndex = session.lockedLines[role];
-        const linesForRole = masterPuzzle.views[role];
-        const selectedLine = linesForRole.find(l => l.lineNumber === lockedIndex);
-        
-        return selectedLine && selectedLine.isMismatchLine === true;
+    const puzzle = PUZZLE_DATABASE.find((p) => p.id === session.puzzleId);
+    if (!puzzle) return;
+
+    const isCorrect = OPERATOR_ROLES.every((role) => {
+      const line = puzzle.views[role].find((l) => l.lineNumber === session.lockedLines[role]);
+      return line?.isMismatchLine === true;
+    });
+
+    if (isCorrect) {
+      console.log(`[GAME] Room "${roomId}" — solved`);
+      stopGameTimer(roomId);
+      io.to(roomId).emit(SOCKET_EVENTS.GAME_PUZZLE_SOLVED, {
+        message: "You found the bug together. System restored!",
       });
-
-      if (isCorrect) {
-        console.log(`[GAME] Room "${payload.roomId}" — CALIBRATION SUCCESSFUL!`);
-        stopGameTimer(payload.roomId);
-        io.to(payload.roomId).emit(SOCKET_EVENTS.GAME_PUZZLE_SOLVED, {
-          message: "Data Alignment Complete. System Restored.",
-        });
-        // Run post mortem for win
-        handleGameEnd(payload.roomId, true, io);
-      } else {
-        console.log(`[GAME] Room "${payload.roomId}" — CALIBRATION FAILED! Incorrect mismatch selected.`);
-        // For now, if they fail, we can just log it or unlock them.
-        // As a simple reset, we can clear the locks and let them try again.
-        session.lockedLines = {};
-      }
+      void handleGameEnd(roomId, true, io);
+    } else {
+      console.log(`[GAME] Room "${roomId}" — wrong lines, resetting locks`);
+      session.lockedLines = {};
+      const reset: LockResetPayload = {
+        message: "Not quite. At least one of you picked the wrong line. Talk it over and try again.",
+      };
+      io.to(roomId).emit(SOCKET_EVENTS.GAME_LOCK_RESET, reset);
     }
   });
 }

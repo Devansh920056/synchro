@@ -9,7 +9,7 @@ export interface WebRTCSignalingPayload {
   targetSocketId: string;
   senderSocketId: string;
   /** SDP for offer/answer, or ICE candidate payload */
-  data: any;
+  data: unknown;
 }
 
 export interface TimerTickPayload {

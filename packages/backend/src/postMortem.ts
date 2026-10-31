@@ -1,103 +1,87 @@
 /**
  * @synchro/backend — Post-Mortem Analytics
  *
- * Handles end-of-game persistence and broadcasting summary screens.
+ * Handles end-of-game persistence and broadcasts the summary screen.
  */
 
 import { Server } from "socket.io";
 import { PrismaClient } from "@prisma/client";
-import { SOCKET_EVENTS, PostMortemSummaryPayload, OperatorRole, CodeLine, PUZZLE_DATABASE } from "@synchro/shared";
-import { getSession } from "./gameEngine";
+import {
+  SOCKET_EVENTS,
+  PUZZLE_DATABASE,
+  type PostMortemSummaryPayload,
+} from "@synchro/shared";
+import { getSession, destroySession } from "./gameEngine";
 
-// Using a shared Prisma client instance
-const prisma = new PrismaClient();
+// Created on first use, so a database problem can never stop the game server from starting
+let prismaClient: PrismaClient | null = null;
+function getPrisma(): PrismaClient {
+  return (prismaClient ??= new PrismaClient());
+}
 
 export async function handleGameEnd(roomId: string, wasWon: boolean, io: Server) {
   const session = getSession(roomId);
-  if (!session) return;
+  if (!session) return; // already ended
 
-  const durationSeconds = Math.floor((Date.now() - session.startedAt) / 1000);
+  // End the session immediately so a late timer tick or a stray lock
+  // can never finish the same round twice.
+  destroySession(roomId);
 
-  // We map the operators to get their views. Since we don't store views in GameSession,
-  // we must reconstruct them from PUZZLE_DATABASE in a real scenario.
-  const puzzle = PUZZLE_DATABASE.find(p => p.id === session.puzzleId);
-  
+  const puzzle = PUZZLE_DATABASE.find((p) => p.id === session.puzzleId);
   if (!puzzle) return;
 
-  const views: Record<OperatorRole, CodeLine[]> = {
-    operator_1: puzzle.views.operator_1,
-    operator_2: puzzle.views.operator_2,
-    operator_3: puzzle.views.operator_3,
-  };
+  const durationSeconds = Math.floor((Date.now() - session.startedAt) / 1000);
 
   const payload: PostMortemSummaryPayload = {
     roomId,
     wasWon,
-    explanation: `Mismatch detected in ${puzzle.title}. The team ${wasWon ? 'successfully aligned' : 'failed to align'} the corrupted data signatures.`,
-    views,
+    explanation: puzzle.explanation,
+    views: puzzle.views,
   };
 
-  // Broadcast summary to everyone in the room
   io.to(roomId).emit(SOCKET_EVENTS.GAME_POST_MORTEM_SUMMARY, payload);
-  console.log(`[POST-MORTEM] Broadcasted summary for room "${roomId}". wasWon: ${wasWon}`);
+  console.log(`[POST-MORTEM] Sent summary for room "${roomId}" (won: ${wasWon})`);
 
-  // Background Database Persistence
+  // Save the result in the background. A database problem must never break the game.
   try {
-    // If the frontend didn't pass real user IDs, we might not be able to link properly,
-    // but we will attempt to link if IDs look like valid CUIDs, or we just create the match.
-    // For now, we will create the match and ignore users if they are guests.
-    // The prompt assumed we'd link them. Let's assume session.assignments[x].playerId is the DB id.
-    const potentialUserIds = session.assignments
-      .map(a => a.dbUserId)
+    const prisma = getPrisma();
+    const candidateIds = session.assignments
+      .map((a) => a.dbUserId)
       .filter((id): id is string => !!id);
 
-    // Verify they actually exist in the DB to prevent P2025 foreign key errors
-    // (e.g. if a user was deleted, or if someone passed a fake CUID)
-    let validUserIds: string[] = [];
-    if (potentialUserIds.length > 0) {
-      const existingUsers: Array<{ id: string }> = await prisma.user.findMany({
-        where: { id: { in: potentialUserIds } },
-        select: { id: true }
-      });
-      validUserIds = existingUsers.map(u => u.id);
-    }
+    // Only link users that really exist, so a made-up ID can't cause a foreign-key error
+    const validUserIds = candidateIds.length
+      ? (
+          await prisma.user.findMany({
+            where: { id: { in: candidateIds } },
+            select: { id: true },
+          })
+        ).map((u) => u.id)
+      : [];
+
+    await prisma.matchHistory.create({
+      data: {
+        roomId,
+        puzzleId: session.puzzleId,
+        durationSeconds,
+        wasWon,
+        ...(validUserIds.length > 0 && {
+          users: { connect: validUserIds.map((id) => ({ id })) },
+        }),
+      },
+    });
 
     if (validUserIds.length > 0) {
-      await prisma.matchHistory.create({
-        data: {
-          roomId,
-          puzzleId: session.puzzleId,
-          durationSeconds,
-          wasWon,
-          users: {
-            connect: validUserIds.map(id => ({ id }))
-          }
-        }
-      });
-
-      // Increment stats for connected users
       await prisma.user.updateMany({
         where: { id: { in: validUserIds } },
         data: {
           gamesPlayed: { increment: 1 },
-          gamesWon: wasWon ? { increment: 1 } : undefined
-        }
+          ...(wasWon && { gamesWon: { increment: 1 } }),
+        },
       });
-      console.log(`[DB] Saved match "${roomId}" to MatchHistory.`);
-    } else {
-      // If we don't have valid users, we can still create an anonymous MatchHistory!
-      // This ensures we can still calculate total games played across the server.
-      await prisma.matchHistory.create({
-        data: {
-          roomId,
-          puzzleId: session.puzzleId,
-          durationSeconds,
-          wasWon,
-        }
-      });
-      console.log(`[DB] Saved anonymous match "${roomId}" to MatchHistory.`);
     }
+    console.log(`[DB] Saved match for room "${roomId}"`);
   } catch (error) {
-    console.error(`[DB ERROR] Failed to save MatchHistory for room "${roomId}":`, error);
+    console.error(`[DB ERROR] Could not save match for room "${roomId}":`, error);
   }
 }

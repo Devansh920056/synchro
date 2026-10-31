@@ -30,7 +30,7 @@ const activeSessions: Map<string, GameSession> = new Map();
 // ─── Fisher-Yates Shuffle ───────────────────────────────────────────
 
 /**
- * Returns a new array with elements in a cryptographically-unbiased random order.
+ * Returns a new array with the elements in a random order.
  * Uses the Fisher-Yates (Durstenfeld) algorithm.
  */
 function shuffle<T>(array: readonly T[]): T[] {
@@ -174,6 +174,19 @@ export function createGameSession(
  */
 export function getSession(roomId: string): GameSession | undefined {
   return activeSessions.get(roomId);
+}
+
+/**
+ * Finds the operator assignment that belongs to a given socket in a room.
+ * Used to trust the server's records instead of what a client claims.
+ */
+export function getAssignment(
+  roomId: string,
+  socketId: string
+): RoleAssignment | undefined {
+  return activeSessions
+    .get(roomId)
+    ?.assignments.find((a) => a.socketId === socketId);
 }
 
 /**

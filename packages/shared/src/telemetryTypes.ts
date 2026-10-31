@@ -24,3 +24,8 @@ export interface LockPayload {
   /** The final line number index they locked in */
   lockedLineIndex: number;
 }
+
+/** Payload sent to every operator when a wrong set of locks is rejected */
+export interface LockResetPayload {
+  message: string;
+}

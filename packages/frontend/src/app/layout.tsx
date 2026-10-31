@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { JetBrains_Mono, Inter } from "next/font/google";
+import { Providers } from "@/components/Providers";
 import "./globals.css";
 
 const inter = Inter({
@@ -13,13 +14,11 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SYNCHRO — System Calibration Deck",
+  title: "Synchro — a 3-player co-op puzzle",
   description:
-    "Asymmetric multiplayer co-op puzzle game. 3 operators. 1 system. Spot the mismatch.",
-  keywords: ["synchro", "multiplayer", "puzzle", "co-op", "calibration"],
+    "Three players, three different screens, one hidden bug. Talk it out, find the line that doesn't match, and fix it before time runs out.",
+  keywords: ["synchro", "multiplayer", "puzzle", "co-op", "debugging game"],
 };
-
-import { Providers } from "@/components/Providers";
 
 export default function RootLayout({
   children,
@@ -27,11 +26,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col bg-neutral-950 text-neutral-100 font-mono selection:bg-emerald-500/30">
+    <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}>
+      <body className="min-h-full flex flex-col bg-neutral-950 text-neutral-100 font-sans selection:bg-emerald-500/30">
         <Providers>{children}</Providers>
       </body>
     </html>

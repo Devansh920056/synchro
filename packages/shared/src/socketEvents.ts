@@ -48,6 +48,9 @@ export const SOCKET_EVENTS = {
   /** Server signals all clients that the puzzle has been solved */
   GAME_PUZZLE_SOLVED: "game:puzzle_solved",
 
+  /** Server tells clients all three locks were wrong, so everyone can try again */
+  GAME_LOCK_RESET: "game:lock_reset",
+
   // ─── WebRTC Audio Signaling ───────────────────────────────────────
   /** Peer sends an SDP offer */
   WEBRTC_OFFER: "webrtc:offer",

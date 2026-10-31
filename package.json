@@ -2,14 +2,17 @@
   "name": "synchro",
   "version": "0.1.0",
   "private": true,
-  "description": "Synchro — Asymmetric multiplayer co-op puzzle game",
+  "description": "Synchro \u2014 Asymmetric multiplayer co-op puzzle game",
   "scripts": {
+    "dev": "pnpm run build:shared && pnpm --parallel --filter @synchro/backend --filter @synchro/frontend dev",
     "dev:backend": "pnpm --filter @synchro/backend dev",
     "dev:frontend": "pnpm --filter @synchro/frontend dev",
-    "dev": "pnpm run dev:backend & pnpm run dev:frontend",
     "build:shared": "pnpm --filter @synchro/shared build",
-    "build": "pnpm run build:shared && pnpm --filter @synchro/backend build && pnpm --filter @synchro/frontend build",
-    "clean": "rm -rf packages/*/dist packages/*/node_modules packages/*/.next node_modules"
+    "build": "pnpm run db:generate && pnpm run build:shared && pnpm --filter @synchro/backend build && pnpm --filter @synchro/frontend build",
+    "lint": "pnpm --filter @synchro/frontend lint",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "clean": "rm -rf packages/*/dist packages/*/node_modules packages/*/.next packages/*/tsconfig.tsbuildinfo node_modules"
   },
   "engines": {
     "node": ">=18.0.0",

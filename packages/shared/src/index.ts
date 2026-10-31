@@ -22,6 +22,7 @@ export type {
 export {
   OPERATOR_ROLES,
   OPERATOR_LABELS,
+  OPERATOR_SHORT_LABELS,
   PUZZLE_DATABASE,
 } from "./gameTypes";
 
@@ -38,6 +39,7 @@ export type {
 export type {
   SelectionPayload,
   LockPayload,
+  LockResetPayload,
 } from "./telemetryTypes";
 
 export type {

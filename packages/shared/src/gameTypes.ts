@@ -17,11 +17,18 @@ export const OPERATOR_ROLES: readonly OperatorRole[] = [
   "operator_3",
 ] as const;
 
-/** Human-readable labels for each operator role */
+/** Plain-language labels for each operator role (shown in the UI) */
 export const OPERATOR_LABELS: Record<OperatorRole, string> = {
-  operator_1: "OPERATOR_01 // PRIMARY CONSOLE",
-  operator_2: "OPERATOR_02 // SYSTEM LOGS",
-  operator_3: "OPERATOR_03 // DATA MONITOR",
+  operator_1: "Screen 1 · Main Code",
+  operator_2: "Screen 2 · Related Code",
+  operator_3: "Screen 3 · Error Log",
+};
+
+/** Short labels, used for small tags next to a line */
+export const OPERATOR_SHORT_LABELS: Record<OperatorRole, string> = {
+  operator_1: "Screen 1",
+  operator_2: "Screen 2",
+  operator_3: "Screen 3",
 };
 
 // ─── Code Line ──────────────────────────────────────────────────────
@@ -62,6 +69,8 @@ export interface MasterPuzzle {
   category: string;
   /** The shared alert string displayed to ALL operators */
   sharedAlert: string;
+  /** Plain-English explanation of the bug, shown after the round ends */
+  explanation: string;
   /** The three operator-specific views — each sees different data */
   views: Record<OperatorRole, CodeLine[]>;
 }
@@ -133,7 +142,12 @@ export const PUZZLE_DATABASE: readonly MasterPuzzle[] = [
     id: "PZL-001",
     title: "Data Type Mismatch",
     category: "data-type",
-    sharedAlert: "Critical: Calibration Core Rejected Transaction",
+    sharedAlert: "Error: the system rejected a number it was given. Find out why.",
+    explanation:
+      "Screen 1 sets calibrationFactor to 5.0, a decimal (float) number. " +
+      "Screen 2's validator is strict and only accepts the whole number (integer) 5. " +
+      "Screen 3's log confirms it: the value arrived as a Float but an Integer was expected. " +
+      "Fix: make both sides use the same number type.",
     views: {
       operator_1: [
         { lineNumber: 1, content: "// CalibrationModule.initialize()", indent: 0, isMismatchLine: false },
@@ -144,7 +158,7 @@ export const PUZZLE_DATABASE: readonly MasterPuzzle[] = [
         { lineNumber: 6, content: "return input * calibrationFactor;", indent: 2, isMismatchLine: false },
         { lineNumber: 7, content: "}", indent: 0, isMismatchLine: false },
         { lineNumber: 8, content: "", indent: 0, isMismatchLine: false },
-        { lineNumber: 9, content: "module.export(applyCalibration);", indent: 0, isMismatchLine: false },
+        { lineNumber: 9, content: "module.exports = applyCalibration;", indent: 0, isMismatchLine: false },
       ],
       operator_2: [
         { lineNumber: 1, content: "// TransactionValidator.verify()", indent: 0, isMismatchLine: false },
@@ -155,7 +169,7 @@ export const PUZZLE_DATABASE: readonly MasterPuzzle[] = [
         { lineNumber: 6, content: "return value === 5;", indent: 2, isMismatchLine: true },
         { lineNumber: 7, content: "}", indent: 0, isMismatchLine: false },
         { lineNumber: 8, content: "", indent: 0, isMismatchLine: false },
-        { lineNumber: 9, content: "module.export(validateInput);", indent: 0, isMismatchLine: false },
+        { lineNumber: 9, content: "module.exports = validateInput;", indent: 0, isMismatchLine: false },
       ],
       operator_3: [
         { lineNumber: 1, content: "[2026-07-01 11:42:03.771] CALIBRATION_CORE", indent: 0, isMismatchLine: false },
@@ -174,9 +188,14 @@ export const PUZZLE_DATABASE: readonly MasterPuzzle[] = [
   // ── Puzzle 2: Case-Sensitivity Mismatch ─────────────────────────
   {
     id: "PZL-002",
-    title: "Case-Sensitivity Mismatch",
+    title: "Name Style Mismatch",
     category: "case-sensitivity",
-    sharedAlert: "Warning: Identity Resolution Failed — Operator Key Mismatch",
+    sharedAlert: "Error: the app can't find the user. A field name doesn't match between systems.",
+    explanation:
+      "The same field is spelled three different ways: userId on Screen 1 (camelCase), " +
+      "user_id on Screen 2 (snake_case), and UserID in the log on Screen 3 (PascalCase). " +
+      "Because the names don't match exactly, the lookup fails. " +
+      "Fix: use one naming style everywhere.",
     views: {
       operator_1: [
         { lineNumber: 1, content: "// AuthService.resolveIdentity()", indent: 0, isMismatchLine: false },
